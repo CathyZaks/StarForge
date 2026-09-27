@@ -728,6 +728,8 @@
           "version": { "type": "string" },
           "description": { "type": "string" },
           "author": { "type": "string" },
+          "authors": { "type": "array", "items": { "type": "string" } },
+          "attribution": { "type": "string" },
           "tags": { "type": "array", "items": { "type": "string" } },
           "functionality": { "type": "array", "items": { "type": "string" } },
           "license": { "type": "string", "nullable": true },
@@ -848,15 +850,21 @@
       },
       "PublishTemplateRequest": {
         "type": "object",
-        "required": ["name", "version", "description", "author", "content"],
+        "required": ["name", "version", "description", "author", "license", "content"],
+        "anyOf": [
+          { "required": ["authors"] },
+          { "required": ["attribution"] }
+        ],
         "properties": {
           "name": { "type": "string" },
           "version": { "type": "string" },
           "description": { "type": "string" },
           "author": { "type": "string" },
+          "authors": { "type": "array", "items": { "type": "string" }, "description": "Non-empty contributor names; provide this or attribution." },
+          "attribution": { "type": "string", "description": "Non-empty attribution statement; provide this or authors." },
           "tags": { "type": "array", "items": { "type": "string" } },
           "functionality": { "type": "array", "items": { "type": "string" } },
-          "license": { "type": "string" },
+          "license": { "type": "string", "description": "Exact SPDX license identifier (for example MIT or Apache-2.0)." },
           "repository": { "type": "string" },
           "homepage": { "type": "string" },
           "documentation": { "type": "string" },
