@@ -130,6 +130,8 @@ enum Commands {
     Inspect(commands::inspect::InspectCommands),
     /// Deploy a compiled Soroban contract (.wasm)
     Deploy(commands::deploy::DeployArgs),
+    /// Watch contract sources and rebuild/redeploy on save
+    Dev(commands::dev::DevArgs),
     /// Deployment history, rollback, verification, and dashboard
     #[command(subcommand)]
     Deployments(commands::deployments::DeploymentsCommands),
@@ -439,7 +441,7 @@ fn main() {
 #[tokio::main]
 async fn run() {
     let cli = Cli::parse();
-    
+
     // Handle --help-all: show information about progressive disclosure
     if cli.help_all {
         eprintln!("StarForge Progressive Disclosure");
@@ -460,7 +462,7 @@ async fn run() {
         eprintln!("");
         std::process::exit(0);
     }
-    
+
     OUTPUT_MODE_INIT.call_once(|| {});
     utils::output::set_json_mode(cli.json);
     utils::output::set_plain_mode(cli.plain);
@@ -519,6 +521,7 @@ async fn run() {
         Commands::Debug(_) => "debug",
         Commands::Inspect(_) => "inspect",
         Commands::Deploy(_) => "deploy",
+        Commands::Dev(_) => "dev",
         Commands::Deployments(_) => "deployments",
         Commands::Environment(_) => "environment",
         Commands::Info => "info",
@@ -619,6 +622,7 @@ async fn run() {
         Commands::Inspect(cmd) => commands::inspect::handle(cmd).await,
         Commands::Debug(cmd) => commands::debug::handle(cmd).await,
         Commands::Deploy(args) => commands::deploy::handle(args).await,
+        Commands::Dev(args) => commands::dev::handle(args).await,
         Commands::Deployments(cmd) => commands::deployments::handle(cmd).await,
         Commands::Environment(cmd) => commands::environment::handle(cmd),
         Commands::Info => commands::info::handle().await,
