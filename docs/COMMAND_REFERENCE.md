@@ -262,6 +262,18 @@ When downloading template archives from a remote registry, the CLI automatically
 
 ---
 
+## `template-vcs`
+
+| Subcommand | Purpose |
+|------------|---------|
+| `template-vcs upgrade <PROJECT> --to <VERSION>` | Print a read-only upgrade checklist from the project's `.starforge-template.json` version (`--patch-hints` adds manual suggestions) |
+| `template-vcs migrate <PATH> <FROM> <TO>` | Generate an AI migration guide between recorded template versions |
+
+The upgrade command never changes project files. Projects without
+`.starforge-template.json` are reported as having an unknown source version.
+
+---
+
 ## `gas`
 
 | Subcommand | Purpose |
