@@ -33,6 +33,14 @@ static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
 static RPC_BUDGET_MANAGER: Lazy<Mutex<RpcBudgetManager>> = 
     Lazy::new(|| Mutex::new(RpcBudgetManager::new()));
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthNode {
+    pub contract_id: String,
+    pub function: String,
+    pub args: Vec<String>,
+    pub sub_invocations: Vec<AuthNode>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SimulationResult {
     pub return_value: String,
@@ -48,6 +56,8 @@ pub struct SimulationResult {
     /// in that case the reason is appended to `errors`.
     #[serde(default)]
     pub resources: Option<SimulationResources>,
+    #[serde(default)]
+    pub auth: Vec<AuthNode>,
 }
 
 impl SimulationResult {
@@ -607,13 +617,63 @@ fn build_simulation_result(result: &serde_json::Value) -> Result<SimulationResul
         }
     };
 
+    let auth = extract_auth(result).unwrap_or_default();
+
     Ok(SimulationResult {
         return_value: decode_return_value(result)?,
         fee: extract_fee(resources.as_ref()),
         events: extract_events(result)?,
         errors,
         resources,
+        auth,
     })
+}
+
+fn extract_auth(result: &serde_json::Value) -> Result<Vec<AuthNode>> {
+    use stellar_xdr::curr::{ReadXdr, SorobanAuthorizationEntry};
+
+    let mut auth_trees = Vec::new();
+
+    if let Some(results) = result.get("results").and_then(|r| r.as_array()) {
+        for res in results {
+            if let Some(auth_array) = res.get("auth").and_then(|a| a.as_array()) {
+                for auth_entry_val in auth_array {
+                    if let Some(auth_b64) = auth_entry_val.as_str() {
+                        if let Ok(entry) = SorobanAuthorizationEntry::from_xdr_base64(auth_b64, stellar_xdr::curr::Limits::none()) {
+                            auth_trees.push(parse_auth_invocation(&entry.root_invocation));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(auth_trees)
+}
+
+fn parse_auth_invocation(inv: &stellar_xdr::curr::SorobanAuthorizedInvocation) -> AuthNode {
+    use stellar_xdr::curr::SorobanAuthorizedFunction;
+
+    let (contract_id, function, args) = match &inv.function {
+        SorobanAuthorizedFunction::ContractFn(call) => {
+            let contract_id = format_scaddress(&call.contract_address);
+            let function = call.function_name.to_utf8_string_lossy();
+            let args = call.args.iter().map(format_scval).collect();
+            (contract_id, function, args)
+        }
+        _ => {
+            ("Host".to_string(), "CreateContract".to_string(), vec![])
+        }
+    };
+
+    let sub_invocations = inv.sub_invocations.iter().map(parse_auth_invocation).collect();
+
+    AuthNode {
+        contract_id,
+        function,
+        args,
+        sub_invocations,
+    }
 }
 
 fn extract_events(result: &serde_json::Value) -> Result<Vec<String>> {
