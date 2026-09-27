@@ -245,6 +245,16 @@ pub enum TemplateCommands {
         /// Optional index to rollback to (0 is oldest, omit for previous)
         index: Option<usize>,
     },
+
+    // ── Commands moved under `template` by ADR 0007 ─────────────────────────
+    // Each moved command keeps its own argument struct, so no flag definition
+    // is duplicated here; `handle` forwards to the owning module.
+    /// Template version control (versioning, branching, changelog)
+    #[command(subcommand)]
+    Vcs(crate::commands::template_vcs::TemplateVcsCommands),
+    /// Interact with the remote template registry
+    #[command(subcommand)]
+    Registry(crate::commands::registry::RegistryCommands),
 }
 
 pub async fn handle(cmd: TemplateCommands) -> Result<()> {
@@ -364,6 +374,9 @@ pub async fn handle(cmd: TemplateCommands) -> Result<()> {
         TemplateCommands::CustomizeRollback { path, index } => {
             template_customize_rollback(path, index).await
         }
+        // ADR 0007: forward the commands that moved under `template`.
+        TemplateCommands::Vcs(cmd) => crate::commands::template_vcs::handle(cmd).await,
+        TemplateCommands::Registry(cmd) => crate::commands::registry::handle(cmd).await,
     }
 }
 

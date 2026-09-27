@@ -303,6 +303,28 @@ pub enum WalletCommands {
     /// Multi-signature account management
     #[command(subcommand)]
     Multisig(MultisigCommands),
+    /// Fetch a transaction for the account
+    ///
+    /// Moved from the top-level `starforge tx` in ADR 0007.
+    Tx {
+        #[command(flatten)]
+        args: crate::commands::tx::TxArgs,
+    },
+    /// SEP-10 web authentication handshake for Stellar anchors
+    ///
+    /// Moved from the top-level `starforge sep10` in ADR 0007. See
+    /// `docs/SEP10_AUTH.md`.
+    Auth {
+        #[command(flatten)]
+        args: crate::commands::sep::Sep10Args,
+    },
+    /// Run connectivity diagnostics for attached Ledger/Trezor devices
+    ///
+    /// Moved from the top-level `starforge diagnostics` in ADR 0007.
+    Diagnostics {
+        #[command(flatten)]
+        args: crate::commands::diagnostics::DiagnosticsArgs,
+    },
 }
 
 #[derive(Subcommand)]
@@ -498,6 +520,9 @@ pub async fn handle(cmd: WalletCommands) -> Result<()> {
             use_global,
         } => tune_wallet_kdf(&name, mem, iterations, parallelism, use_global),
         WalletCommands::Multisig(cmd) => handle_multisig(cmd).await,
+        WalletCommands::Tx { args } => crate::commands::tx::handle(args).await,
+        WalletCommands::Auth { args } => crate::commands::sep::handle(args).await,
+        WalletCommands::Diagnostics { args } => crate::commands::diagnostics::handle(args),
     }
 }
 
