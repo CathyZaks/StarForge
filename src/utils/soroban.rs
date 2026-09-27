@@ -188,6 +188,28 @@ pub async fn simulate_transaction(
     build_simulation_result(&result)
 }
 
+/// Runs `simulateTransaction` against an envelope exactly as supplied.
+///
+/// Unlike [`simulate_transaction`] the caller owns the XDR, which is what makes
+/// `tx decode | tx simulate` work for blobs produced elsewhere. The raw RPC
+/// result is returned undecoded so the caller can show resources, auth
+/// requirements and host function results as the network reported them.
+pub async fn simulate_envelope(envelope_xdr: &str, network: &str) -> Result<serde_json::Value> {
+    let rpc_url = get_rpc_url(network)?;
+    let request = SorobanRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: 1,
+        method: "simulateTransaction".to_string(),
+        params: serde_json::json!({
+            "transaction": envelope_xdr,
+        }),
+    };
+
+    rpc_request_with_url(&rpc_url, request)
+        .await
+        .context("Simulation request failed")
+}
+
 pub async fn simulate_deploy_transaction(
     wasm_hash: &str,
     network: &str,
