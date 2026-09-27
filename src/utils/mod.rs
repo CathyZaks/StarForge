@@ -132,6 +132,7 @@ pub mod performance;
 pub mod pipeline_builder;
 pub mod print;
 pub mod privacy;
+pub mod progress;
 pub mod profiler;
 pub mod project_config;
 pub mod prompt_manager;
