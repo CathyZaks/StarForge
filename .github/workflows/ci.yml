@@ -22,6 +22,14 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  root-allowlist:
+    name: Root File Allowlist
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check intentional root files
+        run: bash scripts/check-root-allowlist.sh
+
   canonical-urls:
     name: Canonical Repository URLs
     runs-on: ubuntu-24.04
