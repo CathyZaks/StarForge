@@ -5,25 +5,6 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::time::Duration;
 
-/// Context about which endpoint was used for a request.
-/// Exposed in verbose/JSON modes to help debug failover behavior.
-#[derive(Debug, Clone)]
-pub struct EndpointContext {
-    pub endpoint_url: String,
-    pub endpoint_index: usize,
-    pub failed_endpoints: Vec<String>,
-}
-
-impl EndpointContext {
-    pub fn new(url: String, index: usize, failed: Vec<String>) -> Self {
-        Self {
-            endpoint_url: url,
-            endpoint_index: index,
-            failed_endpoints: failed,
-        }
-    }
-}
-
 fn build_http_client(timeout: Duration) -> Result<Client> {
     Client::builder()
         .timeout(timeout)
@@ -74,120 +55,13 @@ where
     anyhow::bail!("Exceeded maximum Horizon retries")
 }
 
-/// Issue an HTTP request with automatic failover across configured endpoints.
-/// Returns the response and context about which endpoint was used.
-pub async fn send_with_failover<F, Fut>(
-    network: &str,
-    make_request: F,
-) -> Result<(reqwest::Response, EndpointContext)>
-where
-    F: Fn(&str) -> Fut,
-    Fut: std::future::Future<Output = std::result::Result<reqwest::Response, reqwest::Error>>,
-{
-    let endpoints = get_horizon_endpoints(network)?;
-    let mut failed = Vec::new();
-
-    for (index, endpoint) in endpoints.iter().enumerate() {
-        match send_with_retry(|| make_request(endpoint)).await {
-            Ok(res) if res.status().is_success() => {
-                let ctx = EndpointContext::new(endpoint.clone(), index, failed);
-                return Ok((res, ctx));
-            }
-            Ok(res) if res.status().is_server_error() || res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS => {
-                // Try next endpoint for server errors
-                failed.push(endpoint.clone());
-                continue;
-            }
-            Ok(res) => {
-                // For client errors (4xx), return immediately without trying other endpoints
-                let ctx = EndpointContext::new(endpoint.clone(), index, failed);
-                return Ok((res, ctx));
-            }
-            Err(_) => {
-                // Connection error, try next endpoint
-                failed.push(endpoint.clone());
-                continue;
-            }
-        }
-    }
-
-    anyhow::bail!(
-        "All configured Horizon endpoints for network '{}' failed. Tried {} endpoint(s): {}",
-        network,
-        endpoints.len(),
-        failed.join(", ")
-    )
-}
-
 pub fn network_config(network: &str) -> Result<config::NetworkConfig> {
     let cfg = config::load()?;
     config::get_network_config(&cfg, network)
 }
 
-/// Returns the ordered list of Horizon endpoints for the given network.
-/// If `horizon_endpoints` is configured, it is used; otherwise falls back
-/// to a single-element list containing `horizon_url`.
-pub fn get_horizon_endpoints(network: &str) -> Result<Vec<String>> {
-    let net_cfg = network_config(network)?;
-    if !net_cfg.horizon_endpoints.is_empty() {
-        Ok(net_cfg.horizon_endpoints.clone())
-    } else {
-        Ok(vec![net_cfg.horizon_url.clone()])
-    }
-}
-
-/// Probes an endpoint for health within a bounded timeout.
-/// Returns true if the endpoint responds with HTTP 200 within the timeout.
-async fn probe_endpoint_health(endpoint: &str, timeout_secs: u64) -> bool {
-    let client = match Client::builder()
-        .timeout(Duration::from_secs(timeout_secs))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-
-    let health_url = format!("{}/", endpoint.trim_end_matches('/'));
-    client
-        .get(&health_url)
-        .send()
-        .await
-        .map(|r| r.status().is_success())
-        .unwrap_or(false)
-}
-
-/// Selects a healthy Horizon endpoint from the configured list for the given network.
-/// Probes each endpoint in order and returns the first healthy one.
-/// Returns the endpoint URL, its index, and the list of failed endpoints.
-pub async fn select_healthy_endpoint(network: &str) -> Result<EndpointContext> {
-    let net_cfg = network_config(network)?;
-    let endpoints = get_horizon_endpoints(network)?;
-    let timeout = net_cfg.health_timeout_secs;
-
-    let mut failed = Vec::new();
-
-    for (index, endpoint) in endpoints.iter().enumerate() {
-        if probe_endpoint_health(endpoint, timeout).await {
-            return Ok(EndpointContext::new(
-                endpoint.clone(),
-                index,
-                failed,
-            ));
-        }
-        failed.push(endpoint.clone());
-    }
-
-    anyhow::bail!(
-        "All configured Horizon endpoints for network '{}' are unhealthy or unreachable. \
-         Tried {} endpoint(s).",
-        network,
-        endpoints.len()
-    )
-}
-
 pub fn horizon_url(network: &str) -> Result<String> {
-    let endpoints = get_horizon_endpoints(network)?;
-    Ok(endpoints[0].clone())
+    Ok(network_config(network)?.horizon_url)
 }
 
 pub fn friendbot_url(network: &str) -> Result<Option<String>> {
@@ -273,17 +147,16 @@ pub async fn fund_account(public_key: &str, network: &str) -> Result<()> {
 }
 
 pub async fn fetch_account(public_key: &str, network: &str) -> Result<AccountResponse> {
-    let (res, _ctx) = send_with_failover(network, |endpoint| {
-        let url = format!("{}/accounts/{}", endpoint.trim_end_matches('/'), public_key);
-        HTTP_CLIENT.get(&url).send()
-    })
-    .await
-    .with_context(|| {
-        format!(
-            "Could not reach Horizon on '{}'. Check your internet connection or run: starforge network test",
-            network
-        )
-    })?;
+    let horizon = horizon_url(network)?;
+    let url = format!("{}/accounts/{}", horizon.trim_end_matches('/'), public_key);
+    let res = send_with_retry(|| HTTP_CLIENT.get(&url).send())
+        .await
+        .with_context(|| {
+            format!(
+                "Could not reach Horizon on '{}'. Check your internet connection or run: starforge network test",
+                network
+            )
+        })?;
 
     if res.status() == 200 {
         let account: AccountResponse = res
@@ -804,74 +677,4 @@ fn build_payment_transaction_xdr(
 
     use base64::{engine::general_purpose, Engine as _};
     Ok(general_purpose::STANDARD.encode(mock_xdr))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_probe_endpoint_health_success() {
-        // This test uses a real endpoint - in production you'd mock this
-        let result = probe_endpoint_health("https://horizon-testnet.stellar.org", 5).await;
-        // We expect it to be healthy, but network issues could cause failures
-        // In a real test suite, you'd use a mock server
-        assert!(result || !result); // Always passes, demonstrates the API
-    }
-
-    #[tokio::test]
-    async fn test_probe_endpoint_health_timeout() {
-        // Test with a timeout that should fail
-        let result = probe_endpoint_health("https://10.255.255.1", 1).await;
-        assert!(!result, "Unreachable endpoint should be marked unhealthy");
-    }
-
-    #[test]
-    fn test_endpoint_context_creation() {
-        let ctx = EndpointContext::new(
-            "https://horizon.example.com".to_string(),
-            0,
-            vec!["https://failed.example.com".to_string()],
-        );
-        assert_eq!(ctx.endpoint_url, "https://horizon.example.com");
-        assert_eq!(ctx.endpoint_index, 0);
-        assert_eq!(ctx.failed_endpoints.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_send_with_failover_single_endpoint() {
-        // Test with a network that has a single endpoint
-        // This would need proper mocking in production to avoid real network calls
-        let result = send_with_failover("testnet", |endpoint| async move {
-            // Simulate a successful response
-            Ok(reqwest::Response::from(
-                http::Response::builder()
-                    .status(200)
-                    .body("")
-                    .unwrap(),
-            ))
-        })
-        .await;
-
-        // This test demonstrates the structure but would need proper mocking
-        // In a real implementation, you'd use a mock HTTP server
-    }
-
-    #[tokio::test]
-    async fn test_get_horizon_endpoints_fallback() {
-        // When horizon_endpoints is empty, should fallback to horizon_url
-        // This test would need proper config mocking
-    }
-
-    #[tokio::test]
-    async fn test_failover_skips_server_errors() {
-        // Test that 5xx errors trigger failover to next endpoint
-        // Requires mock HTTP server setup
-    }
-
-    #[tokio::test]
-    async fn test_failover_returns_client_errors_immediately() {
-        // Test that 4xx errors don't trigger failover
-        // Requires mock HTTP server setup
-    }
 }
