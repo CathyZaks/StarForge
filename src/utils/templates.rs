@@ -3156,7 +3156,6 @@ mod tests {
         let tmp = tempdir().unwrap();
         let home = tmp.path().join("home");
         let config_dir = home.join(".starforge");
-        std::env::set_var("HOME", home.as_os_str());
         std::env::set_var("USERPROFILE", home.as_os_str());
         std::env::set_var(crate::utils::config::CONFIG_DIR_ENV, &config_dir);
         let registry_dir = config_dir.join("templates");
