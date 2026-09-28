@@ -92,7 +92,40 @@ enum Commands {
     #[command(subcommand)]
     Plugin(commands::plugin::PluginCommands),
 
-    /// AI-assisted development: local assistant, audits, tests, search, planning
+    /// Contract operations (invoke, inspect, etc.)
+    #[command(subcommand)]
+    Contract(commands::contract::ContractCommands),
+    /// Generate smart contracts from natural language prompts
+    #[command(subcommand)]
+    Generate(commands::generate::GenerateCommands),
+    /// Smart contract completion assistant
+    #[command(subcommand)]
+    Complete(commands::complete::CompleteCommands),
+    /// External plugins
+    #[command(external_subcommand)]
+    External(Vec<String>),
+    /// Debug Soroban contracts with breakpoints, stepping, and inspection
+    #[command(subcommand)]
+    Debug(commands::debug::DebugCommands),
+    /// Deep contract storage inspection (state, key, storage)
+    #[command(subcommand)]
+    Inspect(commands::inspect::InspectCommands),
+    /// Deploy a compiled Soroban contract (.wasm)
+    Deploy(commands::deploy::DeployArgs),
+    /// Watch contract sources and rebuild/redeploy on save
+    Dev(commands::dev::DevArgs),
+    /// Deployment history, rollback, verification, and dashboard
+    #[command(subcommand)]
+    Deployments(commands::deployments::DeploymentsCommands),
+    /// Manage deployment environments (dev/staging/production): configuration, promotion, isolation, and a dashboard
+    #[command(subcommand)]
+    Environment(commands::environment::EnvironmentCommands),
+    /// Show starforge config and environment info
+    Info,
+    /// Manage AI prompt templates and versioning
+    #[command(subcommand)]
+    Prompts(commands::prompts::PromptsCommands),
+    /// Analyze and explain smart contract code using AI
     #[command(subcommand)]
     Ai(commands::tree::AiTree),
 
@@ -183,14 +216,7 @@ fn main() {
 
 #[tokio::main]
 async fn run() {
-    // ADR 0007: rewrite the deprecated top-level spellings (`starforge
-    // ai-debug …`, `starforge deploy --wasm …`) to their noun-verb paths before
-    // clap sees them, warning on stderr. The table lives in
-    // `commands::deprecations` and is removed with the aliases in the next
-    // minor release.
-    let mut argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
-    commands::deprecations::rewrite_argv(&mut argv);
-    let cli = Cli::parse_from(argv);
+    let cli = Cli::parse();
 
     // Handle --help-all: show information about progressive disclosure
     if cli.help_all {
@@ -265,6 +291,17 @@ async fn run() {
         Commands::Wallet(_) => "wallet",
         Commands::Contract(_) => "contract",
         Commands::Deploy(_) => "deploy",
+        Commands::Dev(_) => "dev",
+        Commands::Deployments(_) => "deployments",
+        Commands::Environment(_) => "environment",
+        Commands::Info => "info",
+        Commands::BugReport(_) => "bug-report",
+        Commands::Prompts(_) => "prompts",
+        Commands::Explain(_) => "explain",
+        Commands::Config(_) => "config",
+        Commands::Telemetry(_) => "telemetry",
+        Commands::Tx(_) => "tx",
+        Commands::Sep10(_) => "sep10",
         Commands::Network(_) => "network",
         Commands::Template(_) => "template",
         Commands::Plugin(_) => "plugin",
@@ -297,7 +334,20 @@ async fn run() {
         // enums added by ADR 0007 forward to those modules unchanged.
         Commands::Wallet(cmd) => commands::wallet::handle(cmd).await,
         Commands::Contract(cmd) => commands::contract::handle(cmd).await,
-        Commands::Deploy(cmd) => commands::tree::handle_deploy(cmd).await,
+        Commands::Inspect(cmd) => commands::inspect::handle(cmd).await,
+        Commands::Debug(cmd) => commands::debug::handle(cmd).await,
+        Commands::Deploy(args) => commands::deploy::handle(args).await,
+        Commands::Dev(args) => commands::dev::handle(args).await,
+        Commands::Deployments(cmd) => commands::deployments::handle(cmd).await,
+        Commands::Environment(cmd) => commands::environment::handle(cmd),
+        Commands::Info => commands::info::handle().await,
+        Commands::BugReport(args) => commands::bug_report::handle(args).await,
+        Commands::Prompts(cmd) => commands::prompts::handle(&cmd).await,
+        Commands::Explain(ref cmd) => commands::explain::handle(cmd).await,
+        Commands::Config(cmd) => commands::config::handle(cmd).await,
+        Commands::Telemetry(cmd) => commands::telemetry::handle(cmd).await,
+        Commands::Tx(args) => commands::tx::handle(args).await,
+        Commands::Sep10(args) => commands::sep::handle(args).await,
         Commands::Network(cmd) => commands::network::handle(cmd).await,
         Commands::Template(cmd) => commands::template::handle(cmd).await,
         Commands::Plugin(cmd) => commands::plugin::handle(cmd).await,
