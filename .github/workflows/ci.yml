@@ -143,6 +143,19 @@ jobs:
       - name: Fail when cheat sheet is stale
         run: git diff --exit-code -- docs/COMMAND_CHEATSHEET.md
 
+  error-catalog:
+    name: Error Catalog (anti-drift)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: Check generated error catalog
+        run: cargo test --lib error_catalog_docs_match_generated_catalog --locked
+
   hardware-wallet:
     name: Hardware Wallet (optional backends)
     runs-on: ubuntu-latest

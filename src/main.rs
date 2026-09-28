@@ -247,7 +247,14 @@ async fn run() {
     utils::correlation::init(correlation_id);
 
     // Completion scripts are sourced by the shell, so stdout must be pure script.
-    if !cli.quiet && !matches!(cli.command, Commands::Completions(_)) {
+    // The same holds whenever stdout is redirected or piped: the `tx` XDR toolbox
+    // emits envelopes and JSON there (`tx encode | tx sign | tx submit`), and the
+    // banner would corrupt the payload.
+    use std::io::IsTerminal;
+    if !cli.quiet
+        && !matches!(cli.command, Commands::Completions(_))
+        && std::io::stdout().is_terminal()
+    {
         print_banner();
     }
 
@@ -339,9 +346,10 @@ async fn run() {
     );
 
     if let Err(e) = result {
+        let error_code = utils::errors::ErrorCode::classify(&command_name, &e);
         if utils::output::is_json_mode_enabled() {
-            let _ = utils::output::print_error_json("command_error", &e.to_string());
-            std::process::exit(1);
+            let _ = utils::output::print_error_json(error_code, &e.to_string());
+            error_code.exit_code().exit();
         }
 
         let mut hints = recovery_hints(&command_name, &e);
@@ -350,8 +358,13 @@ async fn run() {
         // still produce a useful, command-agnostic one-liner.
         utils::context_help::troubleshoot_merging(&e.to_string(), &mut hints);
         utils::print::cli_error(&e, &hints.iter().map(String::as_str).collect::<Vec<_>>());
-        let code = utils::exit_codes::determine_exit_code(&e);
-        code.exit();
+        let exit_code = error_code.exit_code();
+        eprintln!("Error code: {}", error_code.id());
+        eprintln!("Cause: {}", error_code.cause());
+        eprintln!("Fix: {}", error_code.fix().trim());
+        eprintln!("Exit: {} ({})", exit_code.code(), exit_code.name());
+        eprintln!("Docs: {}", error_code.docs_url());
+        exit_code.exit();
     }
 
     // On a successful run, optionally surface a single proactive tip.
