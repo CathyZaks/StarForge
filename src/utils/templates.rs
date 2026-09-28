@@ -2011,6 +2011,8 @@ pub async fn publish_template(
         None,
         None,
         None,
+        None,
+        None,
     )
     .await
 }
@@ -2040,6 +2042,8 @@ pub async fn install_template_package(
         version,
         cli_version_min,
         cli_version_max,
+        None,
+        None,
         None,
         None,
         None,
@@ -2085,6 +2089,10 @@ pub async fn publish_template_versioned(
         soroban_sdk_min.as_deref(),
         soroban_sdk_max.as_deref(),
     )?;
+
+    let manifest_license =
+        validate_template_publish_requirements(&source_root, license.as_deref())?;
+    let license = Some(manifest_license);
 
     let storage_root = template_storage_dir()?.join(&name);
     let dest = storage_root.join(&version);
@@ -2334,6 +2342,80 @@ pub fn validate_template_structure_with_constraints(
     }
 
     Ok(())
+}
+
+/// Validate legal metadata and the license file required for marketplace publication.
+pub fn validate_template_publish_requirements(
+    path: &Path,
+    requested_license: Option<&str>,
+) -> Result<String> {
+    let license_path = path.join("LICENSE");
+    if !license_path.is_file() {
+        anyhow::bail!(
+            "Template is missing LICENSE. Add the complete license text matching the SPDX identifier in template.json."
+        );
+    }
+    if fs::read_to_string(&license_path)
+        .with_context(|| format!("Failed to read {}", license_path.display()))?
+        .trim()
+        .is_empty()
+    {
+        anyhow::bail!(
+            "Template LICENSE file is empty. Add the complete license text before publishing."
+        );
+    }
+
+    let manifest_path = path.join("template.json");
+    if !manifest_path.is_file() {
+        anyhow::bail!(
+            "Template is missing template.json. Add a manifest with license and authors or attribution metadata before publishing."
+        );
+    }
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_text)
+        .with_context(|| format!("Invalid template manifest {}", manifest_path.display()))?;
+
+    let manifest_license = manifest
+        .get("license")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|license| !license.is_empty())
+        .context("Template manifest must contain a non-empty SPDX `license` identifier.")?;
+    if manifest_license.ends_with('+') || spdx::license_id(manifest_license).is_none() {
+        anyhow::bail!(
+            "Template manifest license '{}' is not a recognized SPDX license identifier. Use an exact identifier such as MIT or Apache-2.0.",
+            manifest_license
+        );
+    }
+    if let Some(requested_license) = requested_license {
+        if requested_license.trim() != manifest_license {
+            anyhow::bail!(
+                "The --license value '{}' does not match template.json license '{}'. Make both values identical.",
+                requested_license,
+                manifest_license
+            );
+        }
+    }
+
+    let has_authors = match manifest.get("authors") {
+        Some(serde_json::Value::String(authors)) => !authors.trim().is_empty(),
+        Some(serde_json::Value::Array(authors)) => authors
+            .iter()
+            .any(|author| author.as_str().is_some_and(|author| !author.trim().is_empty())),
+        _ => false,
+    };
+    let has_attribution = manifest
+        .get("attribution")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|attribution| !attribution.trim().is_empty());
+    if !has_authors && !has_attribution {
+        anyhow::bail!(
+            "Template manifest is missing attribution. Add a non-empty `authors` field or `attribution` field to template.json."
+        );
+    }
+
+    Ok(manifest_license.to_string())
 }
 
 /// Determine how to fetch a template from a user-supplied source string,
@@ -2888,6 +2970,84 @@ mod tests {
         .unwrap();
         fs::write(dir.join("src/lib.rs"), "#![no_std]\n").unwrap();
         fs::write(dir.join("README.md"), "# Template\n").unwrap();
+        fs::write(dir.join("LICENSE"), "MIT License\nCopyright Alice\n").unwrap();
+        fs::write(
+            dir.join("template.json"),
+            r#"{"license":"MIT","authors":["Alice"]}"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn publish_requirements_reject_missing_license_file() {
+        let tmp = tempdir().unwrap();
+        make_valid_template(tmp.path());
+        fs::remove_file(tmp.path().join("LICENSE")).unwrap();
+
+        let error = validate_template_publish_requirements(tmp.path(), Some("MIT")).unwrap_err();
+        assert!(error.to_string().contains("missing LICENSE"));
+    }
+
+    #[test]
+    fn publish_requirements_reject_empty_license_file() {
+        let tmp = tempdir().unwrap();
+        make_valid_template(tmp.path());
+        fs::write(tmp.path().join("LICENSE"), " \n").unwrap();
+
+        let error = validate_template_publish_requirements(tmp.path(), None).unwrap_err();
+        assert!(error.to_string().contains("LICENSE file is empty"));
+    }
+
+    #[test]
+    fn publish_requirements_reject_license_flag_mismatch() {
+        let tmp = tempdir().unwrap();
+        make_valid_template(tmp.path());
+
+        let error =
+            validate_template_publish_requirements(tmp.path(), Some("Apache-2.0")).unwrap_err();
+        assert!(error.to_string().contains("does not match template.json"));
+    }
+
+    #[test]
+    fn publish_requirements_reject_invalid_spdx_identifier() {
+        let tmp = tempdir().unwrap();
+        make_valid_template(tmp.path());
+        fs::write(
+            tmp.path().join("template.json"),
+            r#"{"license":"Definitely-Not-A-License","authors":["Alice"]}"#,
+        )
+        .unwrap();
+
+        let error = validate_template_publish_requirements(tmp.path(), None).unwrap_err();
+        assert!(error.to_string().contains("SPDX"));
+    }
+
+    #[test]
+    fn publish_requirements_reject_missing_attribution() {
+        let tmp = tempdir().unwrap();
+        make_valid_template(tmp.path());
+        fs::write(
+            tmp.path().join("template.json"),
+            r#"{"license":"MIT","authors":[]}"#,
+        )
+        .unwrap();
+
+        let error = validate_template_publish_requirements(tmp.path(), None).unwrap_err();
+        assert!(error.to_string().contains("missing attribution"));
+    }
+
+    #[test]
+    fn publish_requirements_reject_license_expression() {
+        let tmp = tempdir().unwrap();
+        make_valid_template(tmp.path());
+        fs::write(
+            tmp.path().join("template.json"),
+            r#"{"license":"MIT OR Apache-2.0","authors":["Alice"]}"#,
+        )
+        .unwrap();
+
+        let error = validate_template_publish_requirements(tmp.path(), None).unwrap_err();
+        assert!(error.to_string().contains("SPDX"));
     }
 
     #[test]
@@ -3156,7 +3316,6 @@ mod tests {
         let tmp = tempdir().unwrap();
         let home = tmp.path().join("home");
         let config_dir = home.join(".starforge");
-        std::env::set_var("HOME", home.as_os_str());
         std::env::set_var("USERPROFILE", home.as_os_str());
         std::env::set_var(crate::utils::config::CONFIG_DIR_ENV, &config_dir);
         let registry_dir = config_dir.join("templates");

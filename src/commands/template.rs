@@ -245,6 +245,16 @@ pub enum TemplateCommands {
         /// Optional index to rollback to (0 is oldest, omit for previous)
         index: Option<usize>,
     },
+
+    // ── Commands moved under `template` by ADR 0007 ─────────────────────────
+    // Each moved command keeps its own argument struct, so no flag definition
+    // is duplicated here; `handle` forwards to the owning module.
+    /// Template version control (versioning, branching, changelog)
+    #[command(subcommand)]
+    Vcs(crate::commands::template_vcs::TemplateVcsCommands),
+    /// Interact with the remote template registry
+    #[command(subcommand)]
+    Registry(crate::commands::registry::RegistryCommands),
 }
 
 pub async fn handle(cmd: TemplateCommands) -> Result<()> {
@@ -364,6 +374,9 @@ pub async fn handle(cmd: TemplateCommands) -> Result<()> {
         TemplateCommands::CustomizeRollback { path, index } => {
             template_customize_rollback(path, index).await
         }
+        // ADR 0007: forward the commands that moved under `template`.
+        TemplateCommands::Vcs(cmd) => crate::commands::template_vcs::handle(cmd).await,
+        TemplateCommands::Registry(cmd) => crate::commands::registry::handle(cmd).await,
     }
 }
 
@@ -967,14 +980,9 @@ fn template_lint(path: PathBuf) -> Result<()> {
 
     p::success("Schema checks passed");
 
-    let license = value
-        .get("license")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty());
-    if license.is_none() {
-        anyhow::bail!("License check failed: template.json must contain a non-empty license");
-    }
-    p::success(&format!("License check passed ({})", license.unwrap()));
+    let license = templates::validate_template_publish_requirements(&path, None)
+        .map_err(|err| anyhow::anyhow!("License and attribution check failed: {}", err))?;
+    p::success(&format!("License and attribution checks passed ({})", license));
 
     let security_path = {
         let src = path.join("src");
@@ -1030,6 +1038,8 @@ fn template_new(name: String, output: PathBuf) -> Result<()> {
   "version": "1.0.0",
   "description": "One-line description of what the contract does",
   "author": "Your Name",
+    "authors": ["Your Name"],
+    "attribution": "Copyright (c) 2026 Your Name",
   "tags": ["standard"],
   "source": {{ "type": "builtin", "id": "{}" }},
   "verified": false,
@@ -1062,6 +1072,11 @@ fn template_new(name: String, output: PathBuf) -> Result<()> {
             "# {}\n\nDescribe your template and its public functions here.\n",
             name
         ),
+    )?;
+
+    std::fs::write(
+        template_dir.join("LICENSE"),
+        "MIT License\n\nCopyright (c) 2026 Your Name\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
     )?;
 
     std::fs::write(
@@ -1857,6 +1872,7 @@ mod template_authoring_tests {
 
         let dir = temp.path().join("test-template");
         assert!(dir.join("template.json").exists());
+        assert!(dir.join("LICENSE").exists());
         assert!(dir.join("README.md").exists());
         assert!(dir.join("Cargo.toml").exists());
         assert!(dir.join("src/lib.rs").exists());
