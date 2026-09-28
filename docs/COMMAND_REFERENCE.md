@@ -231,6 +231,48 @@ Coverage analysis tracks Soroban contract functions, line spans, branch paths, u
 | `tx send` | Payment (`--from`, `--to`, `--amount`, `--asset`) |
 | `tx batch` | Batch operations from JSON (`--file`, `--from`) |
 | `tx history <PUBKEY>` | Recent transactions (`--limit`, `--cursor`, `--successful`) |
+| `tx fees` | Recommended fee levels from Horizon fee stats (`--network`) |
+| `tx decode` | Transaction envelope XDR → JSON (`--compact`, `--hash`, `--json`) |
+| `tx encode` | JSON transaction envelope → XDR (`--format base64\|hex`) |
+| `tx sign` | Sign an envelope with a stored wallet (`--wallet`, `--format`) |
+| `tx simulate` | `simulateTransaction` for an arbitrary envelope (`--json`) |
+| `tx submit` | Submit an arbitrary envelope untouched (`--yes`, `--json`) |
+
+### XDR toolbox
+
+`decode`, `encode`, `sign`, `simulate` and `submit` work on envelopes that come
+from anywhere — a wallet, Stellar Lab, a multisig coordinator, a saved file —
+rather than only building their own transactions. Each of the five takes the
+XDR as a positional argument, from `--file <PATH>`, or from stdin, so they
+compose:
+
+```bash
+starforge tx decode ./payment.xdr                     # inspect ops, fee, sequence, hash
+starforge tx decode --hash ./payment.xdr              # the hash the signers approve
+starforge tx decode ./payment.xdr | starforge tx encode
+starforge tx encode envelope.json | starforge tx sign --wallet treasury | starforge tx submit --yes
+starforge tx decode ./payment.xdr | starforge tx simulate
+```
+
+- **stdout is pure payload.** `tx decode`, `tx encode` and `tx sign` write only
+  the JSON or XDR to stdout; the human report (envelope kind, source, sequence,
+  fee, operations, signature hints, hash, network) goes to stderr, and the
+  startup banner is skipped whenever stdout is redirected. Redirect stdout to a
+  file, or read stderr with `2>` to capture the report instead.
+- **`tx decode --json`** emits one document with `kind`, `summary`, `network_id`,
+  `hash` and the full `envelope`. Without it, stdout is just the envelope JSON —
+  exactly what `tx encode` accepts, so decode → edit → encode round-trips
+  byte-for-byte. That guarantee is what keeps an existing signature valid.
+- **`tx sign --wallet <NAME>`** signs with real ed25519 (encrypted wallets are
+  decrypted as for `tx send`) and refuses to sign if the wallet's stored secret
+  belongs to a different public key than the wallet record claims.
+- **`tx submit`** posts the envelope to Horizon as-is, with no re-encoding and no
+  signing, behind the standard confirmation prompt. `--json` implies a
+  non-interactive run: it requires `--yes`, and on mainnet it still needs the
+  `STARFORGE_UNSAFE_SKIP_CONFIRMATION=1` opt-in described in
+  [CONFIRMATION_UX.md](CONFIRMATION_UX.md).
+- Legacy `v0` envelopes decode and re-encode, but cannot be hashed or signed
+  locally; convert them to a `v1` envelope first.
 
 ---
 

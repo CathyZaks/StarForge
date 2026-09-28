@@ -501,7 +501,14 @@ async fn run() {
     utils::correlation::init(correlation_id);
 
     // Completion scripts are sourced by the shell, so stdout must be pure script.
-    if !cli.quiet && !matches!(cli.command, Commands::Completions(_)) {
+    // The same holds whenever stdout is redirected or piped: the `tx` XDR toolbox
+    // emits envelopes and JSON there (`tx encode | tx sign | tx submit`), and the
+    // banner would corrupt the payload.
+    use std::io::IsTerminal;
+    if !cli.quiet
+        && !matches!(cli.command, Commands::Completions(_))
+        && std::io::stdout().is_terminal()
+    {
         print_banner();
     }
 
