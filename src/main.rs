@@ -144,6 +144,12 @@ enum Commands {
     /// Analyze and explain smart contract code using AI
     #[command(subcommand)]
     Explain(commands::explain::ExplainCommands),
+    /// Explain a stable StarForge error code
+    #[command(name = "explain-error")]
+    ExplainError {
+        /// Error code, for example SF1203
+        code: String,
+    },
     /// Manage starforge configuration (telemetry, network)
     #[command(subcommand)]
     Config(commands::config::ConfigCommands),
@@ -525,6 +531,7 @@ async fn run() {
         Commands::BugReport(_) => "bug-report",
         Commands::Prompts(_) => "prompts",
         Commands::Explain(_) => "explain",
+        Commands::ExplainError { .. } => "explain-error",
         Commands::Config(_) => "config",
         Commands::Telemetry(_) => "telemetry",
         Commands::Tx(_) => "tx",
@@ -625,6 +632,20 @@ async fn run() {
         Commands::BugReport(args) => commands::bug_report::handle(args).await,
         Commands::Prompts(cmd) => commands::prompts::handle(&cmd).await,
         Commands::Explain(ref cmd) => commands::explain::handle(cmd).await,
+        Commands::ExplainError { code } => match utils::errors::explain(&code) {
+            Ok(explanation) if utils::output::is_json_mode_enabled() => {
+                utils::output::print_json(&explanation)
+            }
+            Ok(explanation) => {
+                println!("Code: {}", explanation.code);
+                println!("Cause: {}", explanation.cause);
+                println!("Fix: {}", explanation.fix);
+                println!("Exit: {} ({})", explanation.exit_code, explanation.exit_name);
+                println!("Docs: {}", explanation.docs);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        },
         Commands::Config(cmd) => commands::config::handle(cmd).await,
         Commands::Telemetry(cmd) => commands::telemetry::handle(cmd).await,
         Commands::Tx(args) => commands::tx::handle(args).await,
@@ -726,9 +747,10 @@ async fn run() {
     );
 
     if let Err(e) = result {
+        let error_code = utils::errors::ErrorCode::classify(&command_name, &e);
         if utils::output::is_json_mode_enabled() {
-            let _ = utils::output::print_error_json("command_error", &e.to_string());
-            std::process::exit(1);
+            let _ = utils::output::print_error_json(error_code, &e.to_string());
+            error_code.exit_code().exit();
         }
 
         let mut hints = recovery_hints(&command_name, &e);
@@ -737,8 +759,13 @@ async fn run() {
         // still produce a useful, command-agnostic one-liner.
         utils::context_help::troubleshoot_merging(&e.to_string(), &mut hints);
         utils::print::cli_error(&e, &hints.iter().map(String::as_str).collect::<Vec<_>>());
-        let code = utils::exit_codes::determine_exit_code(&e);
-        code.exit();
+        let exit_code = error_code.exit_code();
+        eprintln!("Error code: {}", error_code.id());
+        eprintln!("Cause: {}", error_code.cause());
+        eprintln!("Fix: {}", error_code.fix().trim());
+        eprintln!("Exit: {} ({})", exit_code.code(), exit_code.name());
+        eprintln!("Docs: {}", error_code.docs_url());
+        exit_code.exit();
     }
 
     // On a successful run, optionally surface a single proactive tip.
