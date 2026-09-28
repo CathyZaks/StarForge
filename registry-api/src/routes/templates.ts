@@ -4,7 +4,7 @@ import { TemplateStore, ITemplate } from "../models/Template";
 import { searchAnalytics } from "../models/SearchAnalytics";
 import { searchEngine, SearchOptions } from "../services/searchEngine";
 import { verifyToken, optionalAuth } from "../middleware/auth";
-import { mutationRateLimiter } from "../middleware/rateLimiter";
+import { mutationRateLimiter, searchRateLimiter } from "../middleware/rateLimiter";
 import { ownershipHistoryStore } from "../models/OwnershipHistory";
 import { userStore } from "../models/User";
 import { organizationStore } from "../models/Organization";
@@ -117,7 +117,7 @@ function storageName(name: string): string {
 // personalization, filtering, sorting, and usage analytics. See
 // registry-api/INTELLIGENT_SEARCH.md for the full design notes.
 
-router.post("/search", optionalAuth, async (req: Request, res: Response) => {
+router.post("/search", optionalAuth, searchRateLimiter, async (req: Request, res: Response) => {
   try {
     const {
       query = "",
@@ -247,6 +247,7 @@ router.post("/search", optionalAuth, async (req: Request, res: Response) => {
 router.get(
   "/search/suggestions",
   optionalAuth,
+  searchRateLimiter,
   async (req: Request, res: Response) => {
     try {
       const q = String(req.query.q || "");
