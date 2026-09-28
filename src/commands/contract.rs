@@ -885,7 +885,7 @@ async fn handle_invoke(args: InvokeArgs) -> Result<()> {
             args.hardware,
             Some(&args.hd_path),
             &args.network,
-            false,
+            true, // skip immediate hardware confirmation, do it after simulation
             "contract invocation",
         )?;
         (Some(wallet.clone()), Some(signing))
@@ -909,8 +909,8 @@ async fn handle_invoke(args: InvokeArgs) -> Result<()> {
         &args.args,
         &arg_types,
         &args.network,
-        submit_wallet.as_ref(),
-        signing_request.as_ref(),
+        None,
+        None,
     )
     .await?;
 
@@ -933,13 +933,88 @@ async fn handle_invoke(args: InvokeArgs) -> Result<()> {
         }
     }
 
-    if let Some(tx_result) = outcome.transaction {
+    if args.submit {
+        let submit_wallet_ref = submit_wallet.as_ref().unwrap();
+        
+        let risk_level = if args.network == "mainnet" {
+            crate::utils::confirmation::RiskLevel::High
+        } else {
+            crate::utils::confirmation::RiskLevel::Medium
+        };
+
+        let mut summary = crate::utils::confirmation::OperationSummary::new(
+            if args.hardware.is_some() {
+                "Hardware Wallet — Invoke Contract".to_string()
+            } else {
+                "Invoke Contract Function".to_string()
+            },
+            args.network.clone(),
+            risk_level,
+        )
+        .add("Contract ID", &args.contract_id)
+        .add("Function", &args.function)
+        .add(
+            "Wallet",
+            if args.hardware.is_some() {
+                format!("{} (Hardware)", submit_wallet_ref.name)
+            } else {
+                submit_wallet_ref.name.clone()
+            },
+        )
+        .add(
+            "Estimated Fee",
+            format!("{} stroops", simulation_result.fee),
+        )
+        .add("Return Value", &simulation_result.return_value)
+        .with_auth_trees(simulation_result.auth.clone());
+
+        if args.hardware.is_some() {
+            summary = summary.add("Next step", "Review and approve on your device screen");
+        }
+
+        let confirm_config = crate::utils::confirmation::ConfirmationConfig {
+            risk_level,
+            network: args.network.clone(),
+            skip_confirm: false,
+            dry_run: false,
+            prompt: if args.hardware.is_some() {
+                Some("Proceed with hardware wallet signing?".to_string())
+            } else {
+                Some("Submit this transaction?".to_string())
+            },
+            require_type_confirmation: args.network == "mainnet",
+            ..Default::default()
+        };
+
+        if !crate::utils::confirmation::confirm_operation(&summary, &confirm_config)? {
+            anyhow::bail!("Transaction submission cancelled.");
+        }
+
+        if let Some(kind) = args.hardware {
+            p::info(&format!(
+                "Connect your {} and approve the invocation on the device screen.",
+                kind
+            ));
+        }
+
         println!();
         p::step(2, 2, "Submitting transaction…");
+        
+        let tx_result = soroban::submit_transaction(
+            &args.contract_id,
+            &args.function,
+            &args.args,
+            &arg_types,
+            &args.network,
+            submit_wallet_ref,
+            signing_request.as_ref(),
+        )
+        .await?;
+
         p::kv_accent("Transaction", "✓ Submitted");
         p::kv("TX Hash", &tx_result.hash);
         p::kv("Return Value", &tx_result.return_value);
-    } else if !args.submit {
+    } else {
         println!();
         p::info("Simulation complete. Add --submit to execute the transaction.");
     }
