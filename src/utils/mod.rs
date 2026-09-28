@@ -92,6 +92,7 @@ pub mod doc_templates;
 pub mod docs;
 pub mod documentation;
 pub mod environment;
+pub mod errors;
 pub mod event_monitoring;
 pub mod exit_codes;
 pub mod feature_flags;
